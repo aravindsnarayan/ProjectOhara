@@ -5,9 +5,10 @@ Zero-detection web scraping with Camoufox Firefox fork.
 """
 
 import asyncio
+import os
 import re
 import time
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Union, Literal
 import logging
 
 logger = logging.getLogger(__name__)
@@ -16,6 +17,14 @@ logger = logging.getLogger(__name__)
 MAX_URLS_PER_BATCH = 100
 MAX_RESPONSE_SIZE = 10_000_000  # 10MB
 MIN_RATE_LIMIT_DELAY = 0.5
+
+# Headless mode: 'virtual' uses Xvfb (required in Docker), True uses native headless
+# Set USE_VIRTUAL_DISPLAY=true in Docker environment
+def get_headless_mode() -> Union[bool, Literal['virtual']]:
+    """Get headless mode based on environment."""
+    if os.getenv("USE_VIRTUAL_DISPLAY", "").lower() in ("true", "1", "yes"):
+        return 'virtual'
+    return True
 
 
 def validate_url(url: str) -> bool:
@@ -98,7 +107,8 @@ class CamoufoxScraper:
             return (None, "camoufox not installed")
         
         try:
-            async with self._camoufox(headless=True) as browser:
+            # Use 'virtual' for Xvfb in Docker, True for native headless
+            async with self._camoufox(headless=get_headless_mode()) as browser:
                 page = await browser.new_page()
                 
                 await page.goto(
@@ -128,7 +138,7 @@ class CamoufoxScraper:
             return None
         
         try:
-            async with self._camoufox(headless=True) as browser:
+            async with self._camoufox(headless=get_headless_mode()) as browser:
                 page = await browser.new_page()
                 await page.goto(
                     url,
@@ -202,7 +212,7 @@ async def scrape_urls_batch(
     browser = None
     
     try:
-        browser = await AsyncCamoufox(headless=True).start()
+        browser = await AsyncCamoufox(headless=get_headless_mode()).start()
         logger.info(f"Scraping {total} URLs...")
         
         page = await browser.new_page()

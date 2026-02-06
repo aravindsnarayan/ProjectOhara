@@ -5,16 +5,12 @@ services:
       dockerfile: Dockerfile
     ports:
       - "8000:8000"
-    environment:
-      - DATABASE_URL=sqlite+aiosqlite:///./ohara.db
-      - SECRET_KEY=${SECRET_KEY:-change-this-in-production}
-      - FRONTEND_URL=http://localhost:5173
-      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
-      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}
-      - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID:-}
-      - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET:-}
     volumes:
       - backend-data:/app/data
+    environment:
+      - USE_VIRTUAL_DISPLAY=true
+    env_file:
+      - ./backend/.env
     restart: unless-stopped
 
   frontend:

@@ -4,7 +4,11 @@
 
 import { useAuthStore } from '../stores/auth'
 
-const API_BASE = `${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/api`
+// Use relative /api path in production (nginx proxies to backend)
+// Use full URL in development
+const API_BASE = import.meta.env.VITE_API_URL 
+  ? `${import.meta.env.VITE_API_URL}/api`
+  : '/api'
 
 interface FetchOptions extends RequestInit {
   skipAuth?: boolean
@@ -124,17 +128,17 @@ export function useApi() {
     },
     
     // Deep research returns a stream
-    deepResearch(
+    async deepResearch(
       sessionId: string,
       planPoints: string[],
       provider: string,
       workModel: string,
       finalModel: string,
       language: string
-    ): ReadableStream<string> | null {
+    ): Promise<ReadableStream<Uint8Array> | null> {
       const token = useAuthStore.getState().token
       
-      const response = fetch(`${API_BASE}/research/deep`, {
+      const response = await fetch(`${API_BASE}/research/deep`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -150,7 +154,16 @@ export function useApi() {
         }),
       })
       
-      return response.then((res) => res.body) as unknown as ReadableStream<string> | null
+      if (!response.ok) {
+        if (response.status === 401) {
+          useAuthStore.getState().logout()
+          throw new Error('Session expired. Please log in again.')
+        }
+        const error = await response.json().catch(() => ({ detail: 'Research request failed' }))
+        throw new Error(error.detail || `Request failed: ${response.status}`)
+      }
+      
+      return response.body
     },
   }
 }

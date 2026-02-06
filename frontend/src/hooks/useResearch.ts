@@ -180,7 +180,7 @@ export function useResearch() {
     updateSession(sessionId, { phase: 'researching' })
     
     try {
-      const stream = api.deepResearch(
+      const stream = await api.deepResearch(
         sessionId,
         planPoints,
         settings.defaultProvider,
@@ -193,7 +193,7 @@ export function useResearch() {
         throw new Error('Failed to start research stream')
       }
       
-      const reader = (stream as unknown as ReadableStream).getReader()
+      const reader = stream.getReader()
       const decoder = new TextDecoder()
       let buffer = ''
       let allSources: string[] = []

@@ -48,9 +48,9 @@ export default function LoginPage() {
       // Save token first
       useAuthStore.getState().setToken(token)
       
-      // Fetch user info
-      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000'
-      const response = await fetch(`${apiUrl}/api/auth/me`, {
+      // Fetch user info - use relative URL in production
+      const apiBase = import.meta.env.VITE_API_URL ? `${import.meta.env.VITE_API_URL}/api` : '/api'
+      const response = await fetch(`${apiBase}/auth/me`, {
         headers: { Authorization: `Bearer ${token}` }
       })
       
@@ -74,8 +74,9 @@ export default function LoginPage() {
     setError(null)
     
     // Navigate directly to the backend OAuth endpoint
-    const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000'
-    window.location.href = `${apiUrl}/api/auth/${provider}/login`
+    // Use relative URL to leverage nginx proxy in production
+    const apiBase = import.meta.env.VITE_API_URL ? `${import.meta.env.VITE_API_URL}/api` : '/api'
+    window.location.href = `${apiBase}/auth/${provider}/login`
   }
   
   return (
