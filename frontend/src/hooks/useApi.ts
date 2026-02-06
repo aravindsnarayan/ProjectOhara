@@ -10,15 +10,23 @@ const API_BASE = import.meta.env.VITE_API_URL
   ? `${import.meta.env.VITE_API_URL}/api`
   : '/api'
 
+// Timeout for different operations (in milliseconds)
+const TIMEOUTS = {
+  default: 30_000,      // 30 seconds for most requests
+  scraping: 300_000,    // 5 minutes for scraping operations
+  research: 600_000,    // 10 minutes for deep research
+}
+
 interface FetchOptions extends RequestInit {
   skipAuth?: boolean
+  timeout?: number
 }
 
 export async function apiFetch<T>(
   endpoint: string,
   options: FetchOptions = {}
 ): Promise<T> {
-  const { skipAuth = false, ...fetchOptions } = options
+  const { skipAuth = false, timeout = TIMEOUTS.default, ...fetchOptions } = options
   
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -32,22 +40,36 @@ export async function apiFetch<T>(
     }
   }
   
-  const response = await fetch(`${API_BASE}${endpoint}`, {
-    ...fetchOptions,
-    headers,
-  })
+  // Create AbortController for timeout
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), timeout)
   
-  if (!response.ok) {
-    if (response.status === 401) {
-      useAuthStore.getState().logout()
-      throw new Error('Session expired. Please log in again.')
+  try {
+    const response = await fetch(`${API_BASE}${endpoint}`, {
+      ...fetchOptions,
+      headers,
+      signal: controller.signal,
+    })
+    
+    if (!response.ok) {
+      if (response.status === 401) {
+        useAuthStore.getState().logout()
+        throw new Error('Session expired. Please log in again.')
+      }
+      
+      const error = await response.json().catch(() => ({ detail: 'Unknown error' }))
+      throw new Error(error.detail || `Request failed: ${response.status}`)
     }
     
-    const error = await response.json().catch(() => ({ detail: 'Unknown error' }))
-    throw new Error(error.detail || `Request failed: ${response.status}`)
+    return response.json()
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error('Request timed out. The server is processing your request - please try again.')
+    }
+    throw err
+  } finally {
+    clearTimeout(timeoutId)
   }
-  
-  return response.json()
 }
 
 export function useApi() {
@@ -102,6 +124,7 @@ export function useApi() {
       return apiFetch('/research/search', {
         method: 'POST',
         body: JSON.stringify({ session_id: sessionId, queries }),
+        timeout: TIMEOUTS.scraping,
       })
     },
     
@@ -109,6 +132,7 @@ export function useApi() {
       return apiFetch('/research/clarify', {
         method: 'POST',
         body: JSON.stringify({ session_id: sessionId, urls }),
+        timeout: TIMEOUTS.scraping,
       })
     },
     

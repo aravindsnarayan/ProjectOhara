@@ -2,6 +2,12 @@
 Research Service
 ================
 Business logic for the research pipeline.
+
+Enhanced with Lutum-style prompts and ContextState tracking:
+- Uses ContextState for complete research state management
+- Enhanced prompt builders with academic mode support
+- Key learnings flow for anti-redundancy
+- Global source registry for citation management
 """
 
 import asyncio
@@ -12,6 +18,17 @@ from dataclasses import dataclass
 import logging
 
 from core import set_api_config, get_api_headers, call_chat_completion, scrape_urls_batch
+
+# Import ContextState for state management
+from services.context_state import ContextState
+
+# Import enhanced prompt builders and parsers
+from prompts.think import build_think_prompt, parse_think_response
+from prompts.plan import build_plan_prompt, parse_plan_points
+from prompts.clarify import build_clarify_prompt, format_scraped_for_clarify
+from prompts.pick_urls import build_pick_urls_prompt, parse_pick_urls_response
+from prompts.dossier import build_dossier_prompt, parse_dossier_response
+from prompts.final_synthesis import build_final_synthesis_prompt, parse_final_synthesis_response
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +92,7 @@ async def execute_searches(queries: list[str], results_per_query: int = 20) -> d
     return all_results
 
 
-# === PROMPTS ===
+# === LEGACY PROMPTS (kept for backwards compatibility with overview step) ===
 
 OVERVIEW_SYSTEM_PROMPT = """You analyze user research requests and generate search queries.
 
@@ -90,70 +107,9 @@ query 3: [search query]
 query 4: [search query]
 query 5: [search query]
 
-Generate 5-10 diverse Google search queries to gather initial information."""
+Generate 5-10 diverse Google search queries to gather initial information.
 
-PICK_URLS_SYSTEM_PROMPT = """You select the best URLs from search results.
-
-OUTPUT FORMAT (MANDATORY):
-=== SELECTED ===
-url 1: https://...
-url 2: https://...
-url 3: https://...
-...
-
-Select EXACTLY 10 URLs. NO analysis. NO explanation. ONLY URLs."""
-
-CLARIFY_SYSTEM_PROMPT = """You are a research assistant. Based on the initial search results, 
-ask clarifying questions to focus the research.
-
-Start positively. Ask up to 5 follow-up questions if needed.
-If no questions needed, say you can start immediately.
-
-IMPORTANT: Respond in the SAME LANGUAGE as the user's query."""
-
-PLAN_SYSTEM_PROMPT = """You create structured research plans.
-
-OUTPUT FORMAT:
-=== RESEARCH PLAN ===
-1. [First research point]
-2. [Second research point]
-3. [Third research point]
-...
-
-Create 5-10 specific, actionable research points.
-Respond in the SAME LANGUAGE as the user's query."""
-
-DOSSIER_SYSTEM_PROMPT = """You create detailed research dossiers with citations.
-
-Use [N] citations for factual statements.
-Include an evidence table, analysis, and key learnings.
-
-At the end:
-=== SOURCES ===
-[1] URL - Description
-[2] URL - Description
-...
-=== END SOURCES ===
-
-=== KEY LEARNINGS ===
-1. Key finding 1
-2. Key finding 2
-3. Key finding 3
-=== END LEARNINGS ==="""
-
-SYNTHESIS_SYSTEM_PROMPT = """You synthesize multiple research dossiers into a comprehensive report.
-
-Create cross-connections, identify patterns, resolve contradictions.
-Use [N] citations throughout.
-
-Include sections:
-- Executive Summary
-- Topic Chapters
-- Synthesis & Cross-Connections
-- Critical Assessment
-- Source List
-
-End with: === END REPORT ==="""
+CRITICAL: Respond in the SAME LANGUAGE as the user's query."""
 
 
 # === LLM CALLS ===
@@ -184,7 +140,7 @@ def call_llm(
 
 
 def parse_urls(response: str) -> list[str]:
-    """Extract URLs from LLM response."""
+    """Extract URLs from LLM response (legacy fallback)."""
     url_pattern = r'https?://[^\s<>"\')\]]+[^\s<>"\')\].,;:!?]'
     matches = re.findall(url_pattern, response)
     
@@ -192,7 +148,7 @@ def parse_urls(response: str) -> list[str]:
     urls = []
     for url in matches:
         url = url.rstrip('.,;:!?')
-        if url not in seen and len(urls) < 10:
+        if url not in seen and len(urls) < 20:
             urls.append(url)
             seen.add(url)
     
@@ -219,66 +175,50 @@ def parse_queries(response: str) -> tuple[str, list[str]]:
     return title, queries
 
 
-def parse_plan(response: str) -> list[str]:
-    """Parse research plan points."""
-    points = []
-    
-    # Find numbered points
-    pattern = r'^\d+\.\s*(.+)$'
-    for line in response.split('\n'):
-        match = re.match(pattern, line.strip())
-        if match:
-            point = match.group(1).strip()
-            if point:
-                points.append(point)
-    
-    return points
+def format_search_results(search_results: dict[str, list[dict]]) -> str:
+    """Format search results for LLM consumption."""
+    formatted = []
+    counter = 1
+    for query, results in search_results.items():
+        formatted.append(f"=== Query: {query} ===")
+        for r in results:
+            formatted.append(f"[{counter}] {r['title']}")
+            formatted.append(f"    URL: {r['url']}")
+            formatted.append(f"    {r['snippet'][:200]}")
+            formatted.append("")
+            counter += 1
+    return "\n".join(formatted)
 
 
-def parse_dossier(response: str) -> tuple[str, str, dict]:
-    """Parse dossier text, key learnings, and citations."""
-    dossier_text = response
-    key_learnings = ""
-    citations = {}
-    
-    # Extract sources
-    sources_start = response.find('=== SOURCES ===')
-    sources_end = response.find('=== END SOURCES ===')
-    
-    if sources_start >= 0 and sources_end > sources_start:
-        sources_block = response[sources_start + len('=== SOURCES ==='):sources_end]
-        for line in sources_block.strip().split('\n'):
-            match = re.match(r'\[(\d+)\]\s+(.+)', line.strip())
-            if match:
-                num = int(match.group(1))
-                citations[num] = match.group(2).strip()
-    
-    # Extract key learnings
-    if "=== KEY LEARNINGS ===" in response:
-        parts = response.split("=== KEY LEARNINGS ===")
-        if len(parts) > 1:
-            learnings_part = parts[1]
-            if "=== END LEARNINGS ===" in learnings_part:
-                key_learnings = learnings_part.split("=== END LEARNINGS ===")[0].strip()
-            else:
-                key_learnings = learnings_part.strip()
-    
-    return dossier_text, key_learnings, citations
+def format_scraped_content(scraped: dict[str, str], max_chars: int = 10000) -> str:
+    """Format scraped content for LLM consumption."""
+    content_parts = []
+    for url, content in scraped.items():
+        if content:
+            truncated = content[:max_chars] + "..." if len(content) > max_chars else content
+            content_parts.append(f"=== {url} ===\n{truncated}\n")
+    return "\n".join(content_parts)
 
 
 # === RESEARCH PIPELINE ===
 
 class ResearchPipeline:
     """
-    Orchestrates the full research pipeline.
+    Orchestrates the full research pipeline with Lutum-style prompts.
     
     Phases:
     1. Overview - Generate search queries
     2. Search - Find initial URLs
-    3. Clarify - Ask follow-up questions
-    4. Plan - Create research plan
-    5. Deep Research - Process each point
-    6. Synthesis - Create final report
+    3. Clarify - Ask follow-up questions (uses build_clarify_prompt)
+    4. Plan - Create research plan (uses build_plan_prompt)
+    5. Deep Research - Process each point (uses Think, Pick URLs, Dossier prompts)
+    6. Synthesis - Create final report (uses build_final_synthesis_prompt)
+    
+    Features:
+    - ContextState tracking throughout pipeline
+    - Key learnings flow for anti-redundancy
+    - Global source registry for citation management
+    - Academic mode support with stricter prompts
     """
     
     def __init__(
@@ -288,12 +228,20 @@ class ResearchPipeline:
         work_model: str = "google/gemini-2.5-flash-lite-preview-09-2025",
         final_model: str = "anthropic/claude-sonnet-4.5",
         language: str = "en",
+        academic_mode: bool = False,
     ):
         self.api_key = api_key
         self.provider = provider
         self.work_model = work_model
         self.final_model = final_model
         self.language = language
+        self.academic_mode = academic_mode
+        
+        # Initialize ContextState for state management
+        self.context = ContextState(
+            language=language,
+            academic_mode=academic_mode,
+        )
         
         set_api_config(
             key=api_key,
@@ -301,6 +249,16 @@ class ResearchPipeline:
             work_model=work_model,
             final_model=final_model,
         )
+    
+    def get_context(self) -> ContextState:
+        """Get the current context state."""
+        return self.context
+    
+    def set_context(self, context: ContextState) -> None:
+        """Set context state (for resuming sessions)."""
+        self.context = context
+        self.language = context.language
+        self.academic_mode = context.academic_mode
     
     async def get_overview(
         self,
@@ -315,6 +273,10 @@ class ResearchPipeline:
         
         emit("status", "Getting overview...")
         
+        # Store query in context
+        self.context.set_query(user_query)
+        self.context.current_step = 1
+        
         response = call_llm(
             OVERVIEW_SYSTEM_PROMPT,
             f"Research request: {user_query}",
@@ -327,12 +289,17 @@ class ResearchPipeline:
         
         title, queries = parse_queries(response)
         
+        # Update context
+        self.context.set_title(title)
+        self.context.set_queries(queries)
+        
         emit("status", f"Generated {len(queries)} search queries")
         
         return {
             "session_title": title,
             "queries": queries,
             "raw_response": response,
+            "session_id": self.context.session_id,
         }
     
     async def search_and_pick(
@@ -341,41 +308,53 @@ class ResearchPipeline:
         queries: list[str],
         on_event: Optional[Callable[[ResearchEvent], None]] = None,
     ) -> dict:
-        """Step 2: Execute searches and pick URLs."""
+        """Step 2: Execute searches and pick URLs using enhanced pick_urls prompt."""
         
         def emit(type: str, message: str, data: dict = None):
             if on_event:
                 on_event(ResearchEvent(type, message, data))
         
         emit("status", "Searching DuckDuckGo...")
+        self.context.current_step = 2
         
         search_results = await execute_searches(queries)
         
         if not search_results:
             return {"error": "No search results"}
         
-        # Format for LLM
-        formatted = []
-        counter = 1
-        for query, results in search_results.items():
-            formatted.append(f"=== Query: {query} ===")
-            for r in results:
-                formatted.append(f"[{counter}] {r['title']}")
-                formatted.append(f"    URL: {r['url']}")
-                formatted.append(f"    {r['snippet'][:200]}")
-                formatted.append("")
-                counter += 1
+        # Store search results in context
+        self.context.set_search_results(search_results)
+        
+        # Format search results
+        formatted = format_search_results(search_results)
         
         emit("status", "Selecting best sources...")
         
+        # Use enhanced pick_urls prompt
+        system_prompt, user_prompt = build_pick_urls_prompt(
+            user_query=user_query,
+            current_point="Initial overview",
+            thinking_block="Initial research overview - selecting diverse, high-quality sources.",
+            search_results=formatted,
+            previous_learnings=None,  # No learnings yet
+        )
+        
         pick_response = call_llm(
-            PICK_URLS_SYSTEM_PROMPT,
-            f"User query: {user_query}\n\nSearch results:\n" + "\n".join(formatted),
+            system_prompt,
+            user_prompt,
             self.work_model,
             timeout=60,
         )
         
-        urls = parse_urls(pick_response) if pick_response else []
+        # Use enhanced parser
+        urls = parse_pick_urls_response(pick_response) if pick_response else []
+        
+        # Fallback to regex if parser returns nothing
+        if not urls and pick_response:
+            urls = parse_urls(pick_response)
+        
+        # Store URLs in context
+        self.context.set_urls(urls)
         
         emit("sources", f"Found {len(urls)} sources", {"urls": urls})
         
@@ -390,31 +369,38 @@ class ResearchPipeline:
         urls: list[str],
         on_event: Optional[Callable[[ResearchEvent], None]] = None,
     ) -> dict:
-        """Step 3: Scrape and generate clarifying questions."""
+        """Step 3: Scrape and generate clarifying questions using enhanced clarify prompt."""
         
         def emit(type: str, message: str, data: dict = None):
             if on_event:
                 on_event(ResearchEvent(type, message, data))
         
         emit("status", "Reading sources...")
+        self.context.current_step = 3
         
-        scraped = await scrape_urls_batch(urls, timeout=20)
+        # Limit URLs for faster processing - we can get more during deep research
+        max_urls = min(len(urls), 15)
+        urls_to_scrape = urls[:max_urls]
+        
+        scraped = await scrape_urls_batch(urls_to_scrape, timeout=12, retries_per_url=1)
         
         if not scraped:
             return {"error": "Could not scrape any URLs"}
         
-        # Format scraped content
-        content_parts = []
-        for url, content in scraped.items():
-            if content:
-                truncated = content[:3000] + "..." if len(content) > 3000 else content
-                content_parts.append(f"=== {url} ===\n{truncated}\n")
+        # Format scraped content using enhanced formatter
+        formatted_content = format_scraped_for_clarify(scraped, max_chars_per_page=3000)
         
         emit("status", f"Analyzed {len(scraped)} sources")
         
+        # Use enhanced clarify prompt
+        system_prompt, user_prompt = build_clarify_prompt(
+            user_message=user_query,
+            scraped_content=formatted_content,
+        )
+        
         response = call_llm(
-            CLARIFY_SYSTEM_PROMPT,
-            f"User query: {user_query}\n\n" + "\n".join(content_parts),
+            system_prompt,
+            user_prompt,
             self.work_model,
             timeout=60,
         )
@@ -428,32 +414,50 @@ class ResearchPipeline:
         self,
         user_query: str,
         clarification_answers: list[str],
-        academic_mode: bool = False,
+        clarification_questions: list[str] = None,
+        academic_mode: bool = None,
         on_event: Optional[Callable[[ResearchEvent], None]] = None,
     ) -> dict:
-        """Step 4: Create research plan."""
+        """Step 4: Create research plan using enhanced plan prompt."""
         
         def emit(type: str, message: str, data: dict = None):
             if on_event:
                 on_event(ResearchEvent(type, message, data))
         
         emit("status", "Creating research plan...")
+        self.context.current_step = 4
         
-        context = f"User query: {user_query}"
+        # Use instance academic_mode if not explicitly provided
+        if academic_mode is None:
+            academic_mode = self.academic_mode
+        
+        # Store clarification in context
+        if clarification_questions:
+            self.context.add_clarification(clarification_questions)
         if clarification_answers:
-            context += "\n\nUser's answers:\n" + "\n".join(f"- {a}" for a in clarification_answers)
+            self.context.add_answers(clarification_answers)
         
-        if academic_mode:
-            context += "\n\nMode: ACADEMIC - Create hierarchical research areas with sub-points."
+        # Use enhanced plan prompt builder
+        system_prompt, user_prompt = build_plan_prompt(
+            user_query=user_query,
+            clarification_questions=clarification_questions,
+            clarification_answers=clarification_answers,
+            academic_mode=academic_mode,
+            language=self.language,
+        )
         
         response = call_llm(
-            PLAN_SYSTEM_PROMPT,
-            context,
+            system_prompt,
+            user_prompt,
             self.work_model,
             timeout=60,
         )
         
-        points = parse_plan(response) if response else []
+        # Use enhanced parser
+        points = parse_plan_points(response) if response else []
+        
+        # Store plan in context
+        self.context.set_plan(points)
         
         emit("status", f"Created plan with {len(points)} points")
         
@@ -466,45 +470,49 @@ class ResearchPipeline:
         self,
         user_query: str,
         plan_points: list[str],
+        academic_mode: bool = None,
         on_event: Optional[Callable[[ResearchEvent], None]] = None,
     ) -> AsyncGenerator[ResearchEvent, None]:
         """
-        Step 5: Deep research - process each point.
+        Step 5: Deep research - process each point with Lutum-style prompts.
+        
+        Uses:
+        - build_think_prompt() with previous_learnings for anti-redundancy
+        - build_pick_urls_prompt() with diversification
+        - build_dossier_prompt() with key_learnings flow
         
         Yields events for streaming progress.
         """
         
+        # Use instance academic_mode if not explicitly provided
+        if academic_mode is None:
+            academic_mode = self.academic_mode
+        
         start_time = time.time()
-        completed_dossiers = []
-        accumulated_learnings = []
-        source_registry = {}
-        source_counter = 1
+        self.context.current_step = 5
         
         total_points = len(plan_points)
         
-        yield ResearchEvent("status", f"Starting deep research with {total_points} points")
+        yield ResearchEvent("status", f"Starting deep research with {total_points} points", {
+            "total_points": total_points,
+            "academic_mode": academic_mode,
+        })
         
         for point_idx, current_point in enumerate(plan_points, 1):
             yield ResearchEvent("status", f"[{point_idx}/{total_points}] Processing: {current_point[:50]}...")
             
-            # Think: Generate search strategy
-            think_prompt = f"""Research point: {current_point}
-            
-User's main question: {user_query}
-
-Previous learnings:
-{chr(10).join(accumulated_learnings[-5:]) if accumulated_learnings else "None yet"}
-
-Generate 3-5 search queries for this point.
-
-=== SEARCHES ===
-search 1: [query]
-search 2: [query]
-search 3: [query]"""
+            # === THINK PHASE ===
+            # Use build_think_prompt with previous learnings for anti-redundancy
+            think_system, think_user = build_think_prompt(
+                user_query=user_query,
+                current_point=current_point,
+                previous_learnings=self.context.get_all_learnings(),
+                language=self.language,
+            )
             
             think_response = call_llm(
-                "You generate search queries for research.",
-                think_prompt,
+                think_system,
+                think_user,
                 self.work_model,
                 timeout=60,
             )
@@ -518,12 +526,8 @@ search 3: [query]"""
                 })
                 continue
             
-            # Extract search queries
-            search_queries = []
-            for match in re.finditer(r'search \d+:\s*(.+)', think_response, re.IGNORECASE):
-                query = match.group(1).strip()
-                if query:
-                    search_queries.append(query)
+            # Parse thinking and search queries
+            thinking_block, search_queries = parse_think_response(think_response)
             
             if not search_queries:
                 yield ResearchEvent("point_complete", f"[{point_idx}] Skipped - no queries", {
@@ -534,72 +538,72 @@ search 3: [query]"""
                 })
                 continue
             
-            # Search
-            yield ResearchEvent("status", f"[{point_idx}] Searching...")
+            # === SEARCH PHASE ===
+            yield ResearchEvent("status", f"[{point_idx}] Searching ({len(search_queries)} queries)...")
             search_results = await execute_searches(search_queries, results_per_query=15)
             
             if not search_results:
                 continue
             
-            # Format and pick URLs
-            formatted = []
-            counter = 1
-            for query, results in search_results.items():
-                for r in results:
-                    formatted.append(f"[{counter}] {r['title']}")
-                    formatted.append(f"    URL: {r['url']}")
-                    formatted.append(f"    {r['snippet'][:150]}")
-                    formatted.append("")
-                    counter += 1
+            # Format search results
+            formatted_results = format_search_results(search_results)
             
+            # === PICK URLS PHASE ===
             yield ResearchEvent("status", f"[{point_idx}] Selecting sources...")
             
+            # Use build_pick_urls_prompt with diversification and previous learnings
+            pick_system, pick_user = build_pick_urls_prompt(
+                user_query=user_query,
+                current_point=current_point,
+                thinking_block=thinking_block,
+                search_results=formatted_results,
+                previous_learnings=self.context.get_all_learnings(),
+            )
+            
             pick_response = call_llm(
-                PICK_URLS_SYSTEM_PROMPT,
-                f"Research point: {current_point}\n\nResults:\n" + "\n".join(formatted),
+                pick_system,
+                pick_user,
                 self.work_model,
                 timeout=60,
             )
             
-            urls = parse_urls(pick_response) if pick_response else []
+            # Use enhanced parser
+            urls = parse_pick_urls_response(pick_response) if pick_response else []
+            
+            # Fallback to regex if parser returns nothing
+            if not urls and pick_response:
+                urls = parse_urls(pick_response)
             
             if not urls:
                 continue
             
             yield ResearchEvent("sources", f"[{point_idx}] {len(urls)} sources", {"urls": urls})
             
-            # Scrape
+            # === SCRAPE PHASE ===
             yield ResearchEvent("status", f"[{point_idx}] Reading sources...")
             scraped = await scrape_urls_batch(urls, timeout=30)
             
             if not scraped:
                 continue
             
-            # Create dossier
+            # === DOSSIER PHASE ===
             yield ResearchEvent("status", f"[{point_idx}] Creating dossier...")
             
-            scraped_content = []
-            for url, content in scraped.items():
-                if content:
-                    truncated = content[:10000] + "..." if len(content) > 10000 else content
-                    scraped_content.append(f"=== {url} ===\n{truncated}\n")
+            # Format scraped content
+            scraped_content = format_scraped_content(scraped, max_chars=10000)
             
-            dossier_prompt = f"""Main question: {user_query}
-
-Current research point: {current_point}
-
-Sources:
-{"".join(scraped_content)}
-
-Create a detailed dossier with:
-- Evidence table
-- Analysis
-- Key learnings
-- Source citations [N]"""
+            # Use build_dossier_prompt with academic mode support
+            dossier_system, dossier_user = build_dossier_prompt(
+                user_query=user_query,
+                current_point=current_point,
+                thinking_block=thinking_block,
+                scraped_content=scraped_content,
+                academic_mode=academic_mode,
+            )
             
             dossier_response = call_llm(
-                DOSSIER_SYSTEM_PROMPT,
-                dossier_prompt,
+                dossier_system,
+                dossier_user,
                 self.work_model,
                 timeout=120,
                 max_tokens=12000,
@@ -608,26 +612,43 @@ Create a detailed dossier with:
             if not dossier_response:
                 continue
             
-            dossier_text, key_learnings, citations = parse_dossier(dossier_response)
+            # Parse dossier using enhanced parser
+            dossier_text, key_learnings, citations = parse_dossier_response(dossier_response)
             
-            # Renumber citations globally
+            # Get URLs that were actually scraped
             dossier_urls = list(scraped.keys())
-            for i, url in enumerate(dossier_urls, 1):
-                source_registry[source_counter] = url
-                # Replace local [i] with global [source_counter]
-                dossier_text = re.sub(rf'\[{i}\]', f'[{source_counter}]', dossier_text)
-                if key_learnings:
-                    key_learnings = re.sub(rf'\[{i}\]', f'[{source_counter}]', key_learnings)
-                source_counter += 1
             
-            completed_dossiers.append({
-                "point": current_point,
-                "dossier": dossier_text,
-                "sources": dossier_urls,
-            })
+            # Renumber citations globally using context source registry
+            new_sources = self.context.add_sources(dossier_urls)
             
-            if key_learnings:
-                accumulated_learnings.append(key_learnings)
+            # Remap local citations to global numbers
+            for local_num, url in enumerate(dossier_urls, 1):
+                # Find the global citation number for this URL
+                global_num = next(
+                    (num for num, u in new_sources.items() if u == url),
+                    None
+                )
+                if global_num and global_num != local_num:
+                    # Replace local [local_num] with global [global_num]
+                    dossier_text = re.sub(
+                        rf'\[{local_num}\](?!\d)',  # Don't match [12] when looking for [1]
+                        f'[{global_num}]',
+                        dossier_text
+                    )
+                    if key_learnings:
+                        key_learnings = re.sub(
+                            rf'\[{local_num}\](?!\d)',
+                            f'[{global_num}]',
+                            key_learnings
+                        )
+            
+            # Add dossier to context (this also updates key_learnings)
+            self.context.add_dossier(
+                point=current_point,
+                dossier_text=dossier_text,
+                sources=dossier_urls,
+                learnings=key_learnings,
+            )
             
             yield ResearchEvent("point_complete", f"[{point_idx}] Complete", {
                 "point_title": current_point,
@@ -636,33 +657,30 @@ Create a detailed dossier with:
                 "key_learnings": key_learnings,
                 "dossier_full": dossier_text,
                 "sources": dossier_urls,
+                "citations": citations,
             })
         
-        # Final Synthesis
+        # === FINAL SYNTHESIS ===
+        completed_dossiers = self.context.get_dossiers()
+        
         if completed_dossiers:
             yield ResearchEvent("synthesis_start", "Starting final synthesis...", {
                 "dossier_count": len(completed_dossiers),
-                "total_sources": len(source_registry),
+                "total_sources": len(self.context.get_all_sources()),
             })
             
-            # Format dossiers for synthesis
-            dossier_parts = []
-            for i, d in enumerate(completed_dossiers, 1):
-                dossier_parts.append(f"=== DOSSIER {i}: {d['point']} ===\n{d['dossier']}\n")
-            
-            synthesis_prompt = f"""Original question: {user_query}
-
-Research plan:
-{chr(10).join(f"{i}. {p}" for i, p in enumerate(plan_points, 1))}
-
-Dossiers:
-{"".join(dossier_parts)}
-
-Create a comprehensive synthesis report."""
+            # Use build_final_synthesis_prompt
+            synthesis_system, synthesis_user = build_final_synthesis_prompt(
+                user_query=user_query,
+                research_plan=plan_points,
+                all_dossiers=completed_dossiers,
+                academic_mode=academic_mode,
+                language=self.language,
+            )
             
             final_document = call_llm(
-                SYNTHESIS_SYSTEM_PROMPT,
-                synthesis_prompt,
+                synthesis_system,
+                synthesis_user,
                 self.final_model,
                 timeout=600,
                 max_tokens=32000,
@@ -673,6 +691,9 @@ Create a comprehensive synthesis report."""
                 final_document = "# Research Results\n\n"
                 for d in completed_dossiers:
                     final_document += f"## {d['point']}\n\n{d['dossier']}\n\n---\n\n"
+                
+                # Add source list
+                final_document += self.context.format_sources_for_report()
         else:
             final_document = "No dossiers completed."
         
@@ -681,7 +702,9 @@ Create a comprehensive synthesis report."""
         yield ResearchEvent("done", f"Research complete in {duration:.1f}s", {
             "final_document": final_document,
             "total_points": len(completed_dossiers),
-            "total_sources": len(source_registry),
+            "total_sources": len(self.context.get_all_sources()),
             "duration_seconds": duration,
-            "source_registry": source_registry,
+            "source_registry": self.context.get_all_sources(),
+            "session_id": self.context.session_id,
+            "context": self.context.to_dict(),
         })

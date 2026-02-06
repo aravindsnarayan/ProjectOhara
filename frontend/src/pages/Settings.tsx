@@ -5,7 +5,7 @@
 
 import { useState } from 'react'
 import { Key, Globe, Bot, GraduationCap, Check, Settings as SettingsIcon, Eye, EyeOff } from 'lucide-react'
-import { useSettingsStore } from '../stores/settings'
+import { useSettingsStore, Provider, Language } from '../stores/settings'
 import { useApi } from '../hooks/useApi'
 
 const PROVIDERS = [
@@ -165,7 +165,7 @@ export default function SettingsPage() {
               <select
                 value={settings.defaultProvider}
                 onChange={(e) => {
-                  settings.setDefaultProvider(e.target.value)
+                  settings.setDefaultProvider(e.target.value as Provider)
                   showSaved()
                 }}
                 className="input"
@@ -241,7 +241,7 @@ export default function SettingsPage() {
               <select
                 value={settings.language}
                 onChange={(e) => {
-                  settings.setLanguage(e.target.value)
+                  settings.setLanguage(e.target.value as Language)
                   showSaved()
                 }}
                 className="input"

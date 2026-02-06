@@ -1,18 +1,20 @@
 /**
  * Research Page - Main research interface
- * Scholar's Sanctum aesthetic
+ * Scholar's Sanctum aesthetic with timer and progress tracking
  */
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useParams } from 'react-router-dom'
 import { useSessionsStore } from '../stores/sessions'
+import { useSettingsStore } from '../stores/settings'
 import { useResearch } from '../hooks/useResearch'
+import { t } from '../i18n/translations'
 import Chat from '../components/Chat'
 import InputBar from '../components/InputBar'
 import ProgressPanel from '../components/ProgressPanel'
 import ClarificationPanel from '../components/ClarificationPanel'
 import PlanPanel from '../components/PlanPanel'
-import { AlertTriangle, BookOpen } from 'lucide-react'
+import { AlertTriangle, BookOpen, Clock, BookMarked } from 'lucide-react'
 
 type Phase = 'idle' | 'overview' | 'searching' | 'clarifying' | 'planning' | 'researching' | 'done'
 
@@ -20,12 +22,18 @@ export default function ResearchPage() {
   const { sessionId } = useParams()
   const [phase, setPhase] = useState<Phase>('idle')
   
-  const { sessions, setActiveSession, getActiveSession } = useSessionsStore()
+  // Timer state
+  const [elapsedSeconds, setElapsedSeconds] = useState(0)
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  
+  const { sessions, setActiveSession, getActiveSession, currentProgress } = useSessionsStore()
+  const { language, academicMode, setAcademicMode } = useSettingsStore()
   const session = getActiveSession()
   
   const {
     isLoading,
     error,
+    currentStatus,
     startResearch,
     submitClarification,
     startDeepResearch,
@@ -52,6 +60,27 @@ export default function ResearchPage() {
       setPhase(session.phase)
     }
   }, [session?.phase])
+  
+  // Timer management - start/stop based on loading state
+  useEffect(() => {
+    if (isLoading) {
+      setElapsedSeconds(0)
+      timerRef.current = setInterval(() => {
+        setElapsedSeconds((prev) => prev + 1)
+      }, 1000)
+    } else {
+      if (timerRef.current) {
+        clearInterval(timerRef.current)
+        timerRef.current = null
+      }
+    }
+    
+    return () => {
+      if (timerRef.current) {
+        clearInterval(timerRef.current)
+      }
+    }
+  }, [isLoading])
   
   const handleNewResearch = async (query: string) => {
     try {
@@ -87,11 +116,71 @@ export default function ResearchPage() {
     }
   }
   
+  const handleAcademicToggle = () => {
+    setAcademicMode(!academicMode)
+  }
+  
   const messages = session?.messages || []
   const clarificationMessage = messages.find((m) => m.type === 'clarification')
   
+  // Format timer as MM:SS
+  const formatTimer = (seconds: number) => {
+    const mins = Math.floor(seconds / 60)
+    const secs = seconds % 60
+    return `${mins}:${secs.toString().padStart(2, '0')}`
+  }
+  
   return (
     <div className="h-full flex flex-col">
+      {/* Research Header - Timer and Mode Toggle */}
+      {(isLoading || phase === 'researching') && (
+        <div className="border-b border-ink-800/60 bg-ink-950/60 backdrop-blur-sm 
+                        px-6 py-3 flex items-center justify-between">
+          {/* Timer and Status */}
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2 text-accent-400">
+              <Clock className="w-4 h-4" />
+              <span className="font-mono text-sm">{formatTimer(elapsedSeconds)}</span>
+            </div>
+            {currentStatus && (
+              <span className="text-sm text-parchment-400 animate-pulse-warm">
+                {currentStatus}
+              </span>
+            )}
+          </div>
+          
+          {/* Academic Mode Toggle */}
+          <div className="flex items-center gap-3">
+            <span className={`text-sm transition-colors 
+                            ${!academicMode ? 'text-parchment-200 font-medium' : 'text-parchment-500'}`}>
+              {t('normal', language)}
+            </span>
+            <button
+              onClick={handleAcademicToggle}
+              disabled={phase !== 'idle'}
+              className={`relative w-12 h-6 rounded-full transition-colors duration-200 
+                         ${academicMode 
+                           ? 'bg-burgundy-500' 
+                           : 'bg-ink-700 border border-ink-600'
+                         }
+                         ${phase !== 'idle' ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+              title={t('academicModeActive', language)}
+            >
+              <span
+                className={`absolute top-1 left-1 w-4 h-4 rounded-full bg-parchment-100 
+                           shadow-sm transition-transform duration-200
+                           ${academicMode ? 'translate-x-6' : 'translate-x-0'}`}
+              />
+            </button>
+            <span className={`text-sm transition-colors flex items-center gap-1
+                            ${academicMode ? 'text-parchment-200 font-medium' : 'text-parchment-500'}`}>
+              <BookMarked className="w-4 h-4" />
+              {t('academic', language)}
+            </span>
+          </div>
+        </div>
+      )}
+      
       {/* Error banner */}
       {error && (
         <div className="bg-burgundy-500/10 border-b border-burgundy-500/30 px-6 py-4 
@@ -101,8 +190,13 @@ export default function ResearchPage() {
         </div>
       )}
       
-      {/* Chat area */}
-      <Chat messages={messages} isLoading={isLoading && phase !== 'done'} />
+      {/* Chat area with timer and status */}
+      <Chat 
+        messages={messages} 
+        isLoading={isLoading && phase !== 'done'} 
+        currentStatus={currentStatus}
+        elapsedSeconds={isLoading ? elapsedSeconds : undefined}
+      />
       
       {/* Progress panel */}
       <ProgressPanel />
@@ -113,7 +207,9 @@ export default function ResearchPage() {
           onSubmit={handleNewResearch}
           isLoading={isLoading}
           onCancel={cancelResearch}
-          placeholder={phase === 'done' ? 'Commence a new investigation...' : 'What shall we investigate today?'}
+          placeholder={phase === 'done' 
+            ? 'Commence a new investigation...' 
+            : t('startResearch', language)}
         />
       )}
       
@@ -142,11 +238,28 @@ export default function ResearchPage() {
                 <BookOpen className="w-8 h-8 text-accent-500" />
               </div>
             </div>
+            
+            {/* Progress info */}
+            {currentProgress && (
+              <div className="mb-4">
+                <div className="flex items-center justify-between text-xs text-parchment-500 mb-2">
+                  <span>{t('pointCompleted', language)}{currentProgress.completedPoints}/{currentProgress.totalPoints}</span>
+                  <span>{Math.round((currentProgress.completedPoints / currentProgress.totalPoints) * 100)}%</span>
+                </div>
+                <div className="w-full h-2 bg-ink-800 rounded-full overflow-hidden">
+                  <div 
+                    className="h-full bg-gradient-to-r from-accent-500 to-accent-400 rounded-full transition-all duration-500"
+                    style={{ width: `${(currentProgress.completedPoints / currentProgress.totalPoints) * 100}%` }}
+                  />
+                </div>
+              </div>
+            )}
+            
             <p className="font-display text-lg text-parchment-200 mb-2">
-              Research in Progress
+              {t('researchRunning', language)}
             </p>
             <p className="text-body text-sm text-parchment-500">
-              The investigation is underway. This may take several minutes as we consult various sources...
+              {currentProgress?.message || 'The investigation is underway. This may take several minutes...'}
             </p>
             <button
               onClick={cancelResearch}

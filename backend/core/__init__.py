@@ -17,7 +17,24 @@ from .api_config import (
 
 from .llm_client import call_chat_completion, LLMCallResult
 
-from .scraper import CamoufoxScraper, scrape_urls_batch
+from .scraper import (
+    CamoufoxScraper,
+    scrape_urls_batch,
+    format_scraped_for_llm,
+    extract_domain,
+    is_valid_content_type,
+    truncate_content,
+)
+
+from .security import (
+    validate_url,
+    validate_urls,
+    sanitize_user_input,
+    detect_prompt_injection,
+    MAX_USER_QUERY_LENGTH,
+    MAX_SEARCH_QUERY_LENGTH,
+    MAX_URL_LENGTH,
+)
 
 __all__ = [
     "set_api_config",
@@ -32,4 +49,15 @@ __all__ = [
     "LLMCallResult",
     "CamoufoxScraper",
     "scrape_urls_batch",
+    "format_scraped_for_llm",
+    "extract_domain",
+    "is_valid_content_type",
+    "truncate_content",
+    "validate_url",
+    "validate_urls",
+    "sanitize_user_input",
+    "detect_prompt_injection",
+    "MAX_USER_QUERY_LENGTH",
+    "MAX_SEARCH_QUERY_LENGTH",
+    "MAX_URL_LENGTH",
 ]

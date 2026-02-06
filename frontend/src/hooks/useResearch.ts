@@ -1,10 +1,11 @@
 /**
  * Research Hook - Manages the research workflow
+ * Enhanced with live status updates
  */
 
 import { useState, useCallback, useRef } from 'react'
 import { useApi } from './useApi'
-import { useSessionsStore, ResearchSession } from '../stores/sessions'
+import { useSessionsStore, ResearchSession, Message } from '../stores/sessions'
 import { useSettingsStore } from '../stores/settings'
 
 export interface ResearchEvent {
@@ -17,6 +18,7 @@ export function useResearch() {
   const api = useApi()
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [currentStatus, setCurrentStatus] = useState<string>('')
   const abortControllerRef = useRef<AbortController | null>(null)
   
   const { createSession, updateSession, addMessage, setProgress, clearProgress } = useSessionsStore()
@@ -25,9 +27,11 @@ export function useResearch() {
   const startResearch = useCallback(async (query: string) => {
     setIsLoading(true)
     setError(null)
+    setCurrentStatus('Initiating research...')
     
     try {
       // Step 1: Get overview
+      setCurrentStatus('Analyzing your question...')
       const overview = await api.startOverview({
         message: query,
         provider: settings.defaultProvider,
@@ -56,6 +60,7 @@ export function useResearch() {
       createSession(newSession)
       
       // Step 2: Search and pick URLs
+      setCurrentStatus('Searching for sources...')
       setProgress({
         phase: 'Searching',
         message: 'Searching for sources...',
@@ -75,7 +80,16 @@ export function useResearch() {
         phase: 'clarifying',
       })
       
+      // Add sources message
+      addMessage(overview.session_id, {
+        role: 'assistant',
+        content: `Found ${searchResult.urls.length} relevant sources`,
+        type: 'sources',
+        sources: searchResult.urls,
+      })
+      
       // Step 3: Clarify
+      setCurrentStatus(`Analyzing ${searchResult.urls.length} sources...`)
       setProgress({
         phase: 'Analyzing',
         message: `Analyzing ${searchResult.urls.length} sources...`,
@@ -98,12 +112,14 @@ export function useResearch() {
       
       updateSession(overview.session_id, { phase: 'clarifying' })
       clearProgress()
+      setCurrentStatus('')
       
       return { sessionId: overview.session_id, needsClarification: true }
       
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error'
       setError(message)
+      setCurrentStatus('')
       throw err
     } finally {
       setIsLoading(false)
@@ -116,6 +132,7 @@ export function useResearch() {
   ) => {
     setIsLoading(true)
     setError(null)
+    setCurrentStatus('Processing your answers...')
     
     try {
       // Add user's answers as a message
@@ -127,6 +144,7 @@ export function useResearch() {
       }
       
       // Create plan
+      setCurrentStatus('Creating research plan...')
       setProgress({
         phase: 'Planning',
         message: 'Creating research plan...',
@@ -158,12 +176,14 @@ export function useResearch() {
       })
       
       clearProgress()
+      setCurrentStatus('')
       
       return { planPoints: planResult.plan_points }
       
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error'
       setError(message)
+      setCurrentStatus('')
       throw err
     } finally {
       setIsLoading(false)
@@ -176,6 +196,7 @@ export function useResearch() {
   ) => {
     setIsLoading(true)
     setError(null)
+    setCurrentStatus('Starting deep research...')
     
     updateSession(sessionId, { phase: 'researching' })
     
@@ -217,6 +238,7 @@ export function useResearch() {
             
             // Handle different event types
             if (event.type === 'status') {
+              setCurrentStatus(event.message)
               setProgress({
                 phase: 'Researching',
                 message: event.message,
@@ -227,10 +249,19 @@ export function useResearch() {
             } else if (event.type === 'sources') {
               const newSources = (event.data?.urls as string[]) || []
               allSources = [...allSources, ...newSources]
+              
+              // Add sources message
+              addMessage(sessionId, {
+                role: 'assistant',
+                content: `Found ${newSources.length} sources`,
+                type: 'sources',
+                sources: newSources,
+              })
             } else if (event.type === 'point_complete') {
               const sources = (event.data?.sources as string[]) || []
               allSources = [...allSources, ...sources]
               
+              setCurrentStatus(`Completed point ${event.data?.point_number}/${event.data?.total_points}`)
               setProgress({
                 phase: 'Researching',
                 message: event.message,
@@ -238,7 +269,23 @@ export function useResearch() {
                 totalPoints: Number(event.data?.total_points || planPoints.length),
                 sources: allSources,
               })
+              
+              // Add point summary message
+              const pointMessage: Message = {
+                role: 'assistant',
+                content: String(event.data?.key_learnings || event.message),
+                type: 'point_summary',
+                pointTitle: String(event.data?.point_title || ''),
+                pointNumber: Number(event.data?.point_number || 0),
+                totalPoints: Number(event.data?.total_points || planPoints.length),
+                dossierFull: event.data?.dossier_full as string | undefined,
+                skipped: Boolean(event.data?.skipped),
+                skipReason: event.data?.skip_reason as string | undefined,
+              }
+              addMessage(sessionId, pointMessage)
+              
             } else if (event.type === 'synthesis_start') {
+              setCurrentStatus('Creating final synthesis...')
               setProgress({
                 phase: 'Synthesizing',
                 message: 'Creating final report...',
@@ -246,8 +293,25 @@ export function useResearch() {
                 totalPoints: planPoints.length,
                 sources: allSources,
               })
+              
+              // Add synthesis waiting message
+              addMessage(sessionId, {
+                role: 'assistant',
+                content: event.message || 'Compiling final report from all dossiers...',
+                type: 'synthesis_waiting',
+                estimatedMinutes: Number(event.data?.estimated_minutes || 5),
+              })
+            } else if (event.type === 'log') {
+              // Add log message
+              addMessage(sessionId, {
+                role: 'assistant',
+                content: event.message,
+                type: 'log',
+                logLevel: (event.data?.level as 'warning' | 'error') || 'warning',
+              })
             } else if (event.type === 'done') {
               clearProgress()
+              setCurrentStatus('')
               
               const finalDocument = event.data?.final_document as string
               
@@ -277,6 +341,7 @@ export function useResearch() {
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error'
       setError(message)
+      setCurrentStatus('')
       updateSession(sessionId, { phase: 'done' })
       throw err
     } finally {
@@ -290,12 +355,14 @@ export function useResearch() {
       abortControllerRef.current = null
     }
     clearProgress()
+    setCurrentStatus('')
     setIsLoading(false)
   }, [clearProgress])
   
   return {
     isLoading,
     error,
+    currentStatus,
     startResearch,
     submitClarification,
     startDeepResearch,

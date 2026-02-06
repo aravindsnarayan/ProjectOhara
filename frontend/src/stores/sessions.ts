@@ -1,14 +1,44 @@
 /**
  * Sessions Store - Research session management
+ * Enhanced message types for rich UI rendering
  */
 
 import { create } from 'zustand'
 
+// Rich message types matching Lutum-Veritas
+export type MessageType = 
+  | 'text' 
+  | 'plan' 
+  | 'clarification' 
+  | 'progress' 
+  | 'report'
+  | 'sources'           // URL sources box
+  | 'point_summary'     // Research point completion
+  | 'synthesis_waiting' // Waiting for synthesis
+  | 'log'               // System log message
+
 export interface Message {
   role: 'user' | 'assistant' | 'system'
   content: string
-  type?: 'text' | 'plan' | 'clarification' | 'progress' | 'report'
+  type?: MessageType
   data?: Record<string, unknown>
+  
+  // For sources type
+  sources?: string[]
+  
+  // For point_summary type
+  pointTitle?: string
+  pointNumber?: number
+  totalPoints?: number
+  dossierFull?: string
+  skipped?: boolean
+  skipReason?: string
+  
+  // For log type
+  logLevel?: 'warning' | 'error'
+  
+  // For synthesis_waiting type
+  estimatedMinutes?: number
 }
 
 export interface ResearchSession {
@@ -22,10 +52,23 @@ export interface ResearchSession {
   queries?: string[]
   urls?: string[]
   planPoints?: string[]
+  planVersion?: number
   finalDocument?: string
   sourceRegistry?: Record<number, string>
   totalSources?: number
   durationSeconds?: number
+  
+  // Context state from backend
+  contextState?: {
+    user_query: string
+    clarification_questions: string[]
+    clarification_answers: string[]
+    research_plan: string[]
+    plan_version: number
+    session_title: string
+    current_step: number
+    academic_bereiche?: Record<string, string[]>
+  }
   
   createdAt: string
   updatedAt: string
@@ -42,6 +85,7 @@ interface SessionsState {
     completedPoints: number
     totalPoints: number
     sources: string[]
+    elapsedSeconds?: number
   } | null
   
   // Actions

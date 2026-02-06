@@ -230,6 +230,8 @@ async def research_clarify(
     db: AsyncSession = Depends(get_db),
 ):
     """Step 3: Scrape URLs and generate clarification questions."""
+    import logging
+    logger = logging.getLogger(__name__)
     
     result_query = await db.execute(
         select(ResearchSession).where(
@@ -248,7 +250,18 @@ async def research_clarify(
     pipeline = ResearchPipeline(api_key=api_key, provider=provider)
     
     user_query = session.context_state.get("user_query", "")
-    result = await pipeline.clarify(user_query, request.urls)
+    
+    try:
+        logger.info(f"Starting clarify for {len(request.urls)} URLs")
+        result = await pipeline.clarify(user_query, request.urls)
+        logger.info(f"Clarify complete: scraped={result.get('scraped_count', 0)}")
+    except Exception as e:
+        logger.exception(f"Clarify failed: {e}")
+        return ClarifyResponse(
+            clarification="", 
+            scraped_count=0, 
+            error=f"Failed to analyze sources: {str(e)[:200]}"
+        )
     
     if result.get("error"):
         return ClarifyResponse(clarification="", scraped_count=0, error=result["error"])
