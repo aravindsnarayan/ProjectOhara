@@ -1,14 +1,15 @@
 /**
  * Settings Page - User preferences and API keys
+ * Scholar's Sanctum aesthetic
  */
 
 import { useState } from 'react'
-import { Key, Globe, Bot, GraduationCap, Check } from 'lucide-react'
+import { Key, Globe, Bot, GraduationCap, Check, Settings as SettingsIcon, Eye, EyeOff } from 'lucide-react'
 import { useSettingsStore } from '../stores/settings'
 import { useApi } from '../hooks/useApi'
 
 const PROVIDERS = [
-  { id: 'openrouter', name: 'OpenRouter', description: 'Access multiple models with one API key' },
+  { id: 'openrouter', name: 'OpenRouter', description: 'Access diverse models with a unified key' },
   { id: 'openai', name: 'OpenAI', description: 'GPT-4 and GPT-3.5 models' },
   { id: 'anthropic', name: 'Anthropic', description: 'Claude models' },
   { id: 'google', name: 'Google', description: 'Gemini models' },
@@ -45,6 +46,7 @@ export default function SettingsPage() {
   const settings = useSettingsStore()
   const api = useApi()
   const [saved, setSaved] = useState(false)
+  const [showApiKey, setShowApiKey] = useState<string | null>(null)
   
   const showSaved = () => {
     setSaved(true)
@@ -64,72 +66,100 @@ export default function SettingsPage() {
   }
   
   return (
-    <div className="h-full overflow-y-auto p-8">
-      <div className="max-w-2xl mx-auto space-y-8">
-        <div>
-          <h1 className="text-2xl font-bold text-dark-50">Settings</h1>
-          <p className="text-dark-400 mt-1">Configure your research preferences</p>
+    <div className="h-full overflow-y-auto p-6 md:p-8">
+      <div className="max-w-2xl mx-auto space-y-8 animate-fade-in">
+        {/* Header */}
+        <div className="mb-8">
+          <div className="flex items-center gap-4 mb-2">
+            <SettingsIcon className="w-8 h-8 text-accent-500" strokeWidth={1.5} />
+            <h1 className="font-display text-3xl font-semibold text-parchment-100">
+              Settings
+            </h1>
+          </div>
+          <p className="text-body text-parchment-500 ml-12">
+            Configure your research preferences and API credentials
+          </p>
         </div>
         
         {/* Saved notification */}
         {saved && (
-          <div className="fixed top-6 right-6 bg-green-500/20 border border-green-500/30 rounded-lg px-4 py-2 flex items-center gap-2">
-            <Check className="w-4 h-4 text-green-400" />
-            <span className="text-sm text-green-400">Settings saved</span>
+          <div className="fixed top-6 right-6 bg-green-500/10 border border-green-500/30 
+                          rounded-xl px-4 py-3 flex items-center gap-3 animate-slide-up
+                          shadow-elevated z-50">
+            <div className="w-6 h-6 bg-green-500/20 rounded-full flex items-center justify-center">
+              <Check className="w-4 h-4 text-green-400" />
+            </div>
+            <span className="text-sm text-green-400 font-sans">Settings preserved</span>
           </div>
         )}
         
         {/* API Keys */}
-        <section className="card">
-          <div className="flex items-center gap-3 mb-6">
-            <div className="w-10 h-10 bg-primary-600/20 rounded-lg flex items-center justify-center">
-              <Key className="w-5 h-5 text-primary-400" />
+        <section className="card p-6">
+          <div className="flex items-center gap-4 mb-6">
+            <div className="w-12 h-12 bg-accent-500/10 rounded-xl flex items-center justify-center
+                            border border-accent-500/20">
+              <Key className="w-6 h-6 text-accent-500" />
             </div>
             <div>
-              <h2 className="text-lg font-semibold text-dark-100">API Keys</h2>
-              <p className="text-sm text-dark-400">Configure your LLM provider API keys</p>
+              <h2 className="font-display text-xl font-medium text-parchment-100">API Credentials</h2>
+              <p className="text-sm text-parchment-500 font-sans">Configure your LLM provider access</p>
             </div>
           </div>
           
-          <div className="space-y-4">
+          <div className="space-y-5">
             {PROVIDERS.map((provider) => (
               <div key={provider.id}>
-                <label className="block text-sm font-medium text-dark-300 mb-1">
+                <label className="text-label mb-2 block">
                   {provider.name}
                 </label>
-                <input
-                  type="password"
-                  placeholder={`Enter ${provider.name} API key`}
-                  value={settings.apiKeys[provider.id as keyof typeof settings.apiKeys] || ''}
-                  onChange={(e) => settings.setApiKey(provider.id as keyof typeof settings.apiKeys, e.target.value)}
-                  onBlur={(e) => {
-                    if (e.target.value) {
-                      handleApiKeyChange(provider.id as keyof typeof settings.apiKeys, e.target.value)
-                    }
-                  }}
-                  className="input"
-                />
-                <p className="text-xs text-dark-500 mt-1">{provider.description}</p>
+                <div className="relative">
+                  <input
+                    type={showApiKey === provider.id ? 'text' : 'password'}
+                    placeholder={`Enter ${provider.name} API key`}
+                    value={settings.apiKeys[provider.id as keyof typeof settings.apiKeys] || ''}
+                    onChange={(e) => settings.setApiKey(provider.id as keyof typeof settings.apiKeys, e.target.value)}
+                    onBlur={(e) => {
+                      if (e.target.value) {
+                        handleApiKeyChange(provider.id as keyof typeof settings.apiKeys, e.target.value)
+                      }
+                    }}
+                    className="input pr-12"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowApiKey(showApiKey === provider.id ? null : provider.id)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 
+                               text-parchment-500 hover:text-parchment-300 transition-colors"
+                  >
+                    {showApiKey === provider.id ? (
+                      <EyeOff className="w-4 h-4" />
+                    ) : (
+                      <Eye className="w-4 h-4" />
+                    )}
+                  </button>
+                </div>
+                <p className="text-xs text-parchment-600 mt-1.5 font-sans">{provider.description}</p>
               </div>
             ))}
           </div>
         </section>
         
         {/* Model Selection */}
-        <section className="card">
-          <div className="flex items-center gap-3 mb-6">
-            <div className="w-10 h-10 bg-primary-600/20 rounded-lg flex items-center justify-center">
-              <Bot className="w-5 h-5 text-primary-400" />
+        <section className="card p-6">
+          <div className="flex items-center gap-4 mb-6">
+            <div className="w-12 h-12 bg-accent-500/10 rounded-xl flex items-center justify-center
+                            border border-accent-500/20">
+              <Bot className="w-6 h-6 text-accent-500" />
             </div>
             <div>
-              <h2 className="text-lg font-semibold text-dark-100">Model Preferences</h2>
-              <p className="text-sm text-dark-400">Choose your default models</p>
+              <h2 className="font-display text-xl font-medium text-parchment-100">Model Preferences</h2>
+              <p className="text-sm text-parchment-500 font-sans">Select your preferred AI models</p>
             </div>
           </div>
           
-          <div className="space-y-4">
+          <div className="space-y-5">
             <div>
-              <label className="block text-sm font-medium text-dark-300 mb-1">
+              <label className="text-label mb-2 block">
                 Default Provider
               </label>
               <select
@@ -147,8 +177,8 @@ export default function SettingsPage() {
             </div>
             
             <div>
-              <label className="block text-sm font-medium text-dark-300 mb-1">
-                Work Model
+              <label className="text-label mb-2 block">
+                Research Model
               </label>
               <select
                 value={settings.workModel}
@@ -162,14 +192,14 @@ export default function SettingsPage() {
                   <option key={m.id} value={m.id}>{m.name}</option>
                 ))}
               </select>
-              <p className="text-xs text-dark-500 mt-1">
-                Used for search, analysis, and dossier creation
+              <p className="text-xs text-parchment-600 mt-1.5 font-sans">
+                Used for search, analysis, and dossier compilation
               </p>
             </div>
             
             <div>
-              <label className="block text-sm font-medium text-dark-300 mb-1">
-                Final Model
+              <label className="text-label mb-2 block">
+                Synthesis Model
               </label>
               <select
                 value={settings.finalModel}
@@ -183,7 +213,7 @@ export default function SettingsPage() {
                   <option key={m.id} value={m.id}>{m.name}</option>
                 ))}
               </select>
-              <p className="text-xs text-dark-500 mt-1">
+              <p className="text-xs text-parchment-600 mt-1.5 font-sans">
                 Used for final synthesis and report generation
               </p>
             </div>
@@ -191,20 +221,21 @@ export default function SettingsPage() {
         </section>
         
         {/* Language & Mode */}
-        <section className="card">
-          <div className="flex items-center gap-3 mb-6">
-            <div className="w-10 h-10 bg-primary-600/20 rounded-lg flex items-center justify-center">
-              <Globe className="w-5 h-5 text-primary-400" />
+        <section className="card p-6">
+          <div className="flex items-center gap-4 mb-6">
+            <div className="w-12 h-12 bg-accent-500/10 rounded-xl flex items-center justify-center
+                            border border-accent-500/20">
+              <Globe className="w-6 h-6 text-accent-500" />
             </div>
             <div>
-              <h2 className="text-lg font-semibold text-dark-100">Research Preferences</h2>
-              <p className="text-sm text-dark-400">Customize research behavior</p>
+              <h2 className="font-display text-xl font-medium text-parchment-100">Research Preferences</h2>
+              <p className="text-sm text-parchment-500 font-sans">Customize research behavior</p>
             </div>
           </div>
           
-          <div className="space-y-4">
+          <div className="space-y-5">
             <div>
-              <label className="block text-sm font-medium text-dark-300 mb-1">
+              <label className="text-label mb-2 block">
                 Output Language
               </label>
               <select
@@ -221,13 +252,17 @@ export default function SettingsPage() {
               </select>
             </div>
             
-            <div className="flex items-center justify-between py-3">
-              <div className="flex items-center gap-3">
-                <GraduationCap className="w-5 h-5 text-dark-400" />
+            {/* Academic Mode Toggle */}
+            <div className="flex items-center justify-between py-4 border-t border-ink-800">
+              <div className="flex items-center gap-4">
+                <div className="w-10 h-10 bg-burgundy-500/10 rounded-lg flex items-center justify-center
+                                border border-burgundy-500/20">
+                  <GraduationCap className="w-5 h-5 text-burgundy-400" />
+                </div>
                 <div>
-                  <p className="text-sm font-medium text-dark-200">Academic Mode</p>
-                  <p className="text-xs text-dark-500">
-                    Generates formal academic-style reports with citations
+                  <p className="font-sans font-medium text-parchment-200">Academic Mode</p>
+                  <p className="text-xs text-parchment-600 font-sans">
+                    Generate formal reports with proper citations
                   </p>
                 </div>
               </div>
@@ -236,19 +271,25 @@ export default function SettingsPage() {
                   settings.setAcademicMode(!settings.academicMode)
                   showSaved()
                 }}
-                className={`w-12 h-6 rounded-full transition-colors ${
-                  settings.academicMode ? 'bg-primary-600' : 'bg-dark-600'
+                className={`relative w-14 h-7 rounded-full transition-all duration-300 ${
+                  settings.academicMode 
+                    ? 'bg-accent-600 shadow-glow-amber' 
+                    : 'bg-ink-700'
                 }`}
               >
                 <div
-                  className={`w-5 h-5 bg-white rounded-full transition-transform ${
-                    settings.academicMode ? 'translate-x-6' : 'translate-x-0.5'
+                  className={`absolute top-1 left-1 w-5 h-5 bg-parchment-100 rounded-full 
+                              shadow-md transition-transform duration-300 ${
+                    settings.academicMode ? 'translate-x-7' : 'translate-x-0'
                   }`}
                 />
               </button>
             </div>
           </div>
         </section>
+        
+        {/* Footer spacer */}
+        <div className="h-8" />
       </div>
     </div>
   )

@@ -1,5 +1,6 @@
 /**
  * Research Page - Main research interface
+ * Scholar's Sanctum aesthetic
  */
 
 import { useState, useEffect } from 'react'
@@ -11,6 +12,7 @@ import InputBar from '../components/InputBar'
 import ProgressPanel from '../components/ProgressPanel'
 import ClarificationPanel from '../components/ClarificationPanel'
 import PlanPanel from '../components/PlanPanel'
+import { AlertTriangle, BookOpen } from 'lucide-react'
 
 type Phase = 'idle' | 'overview' | 'searching' | 'clarifying' | 'planning' | 'researching' | 'done'
 
@@ -92,8 +94,10 @@ export default function ResearchPage() {
     <div className="h-full flex flex-col">
       {/* Error banner */}
       {error && (
-        <div className="bg-red-500/10 border-b border-red-500/20 px-6 py-3">
-          <p className="text-sm text-red-400">{error}</p>
+        <div className="bg-burgundy-500/10 border-b border-burgundy-500/30 px-6 py-4 
+                        flex items-center gap-3 animate-slide-up">
+          <AlertTriangle className="w-5 h-5 text-burgundy-400 flex-shrink-0" />
+          <p className="text-sm text-burgundy-300 font-sans">{error}</p>
         </div>
       )}
       
@@ -109,7 +113,7 @@ export default function ResearchPage() {
           onSubmit={handleNewResearch}
           isLoading={isLoading}
           onCancel={cancelResearch}
-          placeholder={phase === 'done' ? 'Start a new research...' : 'Enter your research question...'}
+          placeholder={phase === 'done' ? 'Commence a new investigation...' : 'What shall we investigate today?'}
         />
       )}
       
@@ -130,16 +134,27 @@ export default function ResearchPage() {
       )}
       
       {phase === 'researching' && (
-        <div className="border-t border-dark-700 bg-dark-900 p-6 text-center">
-          <p className="text-dark-400">
-            Research in progress... This may take several minutes.
-          </p>
-          <button
-            onClick={cancelResearch}
-            className="btn btn-secondary mt-4"
-          >
-            Cancel
-          </button>
+        <div className="border-t border-ink-800/60 bg-ink-950/80 backdrop-blur-sm p-8 text-center">
+          <div className="max-w-md mx-auto animate-fade-in">
+            <div className="w-16 h-16 mx-auto mb-5 relative">
+              <div className="absolute inset-0 bg-accent-500/10 rounded-2xl animate-pulse-warm" />
+              <div className="absolute inset-0 flex items-center justify-center">
+                <BookOpen className="w-8 h-8 text-accent-500" />
+              </div>
+            </div>
+            <p className="font-display text-lg text-parchment-200 mb-2">
+              Research in Progress
+            </p>
+            <p className="text-body text-sm text-parchment-500">
+              The investigation is underway. This may take several minutes as we consult various sources...
+            </p>
+            <button
+              onClick={cancelResearch}
+              className="btn btn-danger mt-6"
+            >
+              Cancel Investigation
+            </button>
+          </div>
         </div>
       )}
     </div>
